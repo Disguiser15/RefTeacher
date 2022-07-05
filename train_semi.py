@@ -64,17 +64,7 @@ def train_one_epoch(__C,
     student.train()
     # if __C.MULTIPROCESSING_DISTRIBUTED:
     #     loader.sampler.set_epoch(epoch)
-    
-    # if __C.MULTIPROCESSING_DISTRIBUTED and epoch>=__C.BURN_UP_EPOCH:
-    #     loader_label.sampler.set_epoch(epoch)
-    #     loader_unlabel.sampler.set_epoch(epoch)
-    #     loader_label.set_length(max(len(loader_label),len(loader_unlabel)))
-    #     loader_unlabel.set_length(max(len(loader_label),len(loader_unlabel)))
-    # elif __C.MULTIPROCESSING_DISTRIBUTED and epoch<__C.BURN_UP_EPOCH:
-    #     loader_label.sampler.set_epoch(epoch)
-    #     loader_unlabel.sampler.set_epoch(epoch)
-    #     loader_label.set_length(min(len(loader_label),len(loader_unlabel)))
-    #     loader_unlabel.set_length(min(len(loader_label),len(loader_unlabel)))
+
     if __C.MULTIPROCESSING_DISTRIBUTED:
         loader_label.sampler.set_epoch(epoch)
         loader_unlabel.sampler.set_epoch(epoch)
@@ -104,14 +94,6 @@ def train_one_epoch(__C,
         ni=ith_batch+epoch*nb
         data_time.update(time.time() - end)
 
-        # ref_iter,image_iter,image_lab_iter,mask_iter,bitmask_full,box_iter,gt_box_iter,mask_id,info_iter= data
-        # ref_iter = ref_iter.cuda(non_blocking=True)
-        # image_iter = image_iter.cuda(non_blocking=True)
-        # image_lab_iter= image_lab_iter.cuda(non_blocking=True)
-        # mask_iter = mask_iter.cuda(non_blocking=True)
-        # box_iter = box_iter.cuda( non_blocking=True)
-        # bitmask_full= bitmask_full.cuda( non_blocking=True)
-
         (ref_iter,image_iter,mask_iter,box_iter,gt_box_iter,mask_id,info_iter), (
             ref_iter_unlabel,image_iter_unlabel,mask_iter_unlabel,box_iter_unlabel,gt_box_iter_unlabel,mask_id_unlabel,info_iter_unlabel) = data
         ref_iter = ref_iter.cuda(non_blocking=True)
@@ -133,18 +115,6 @@ def train_one_epoch(__C,
             image_iter_unlabel_resize=F.interpolate(image_iter_unlabel,(h,w))
             # mask_iter_unlabel_resize=F.interpolate(mask_iter_unlabel,(h,w))
 
-
-        # _update_teacher_model(student, teacher, word_size=len(__C.GPU), keep_rate=__C.SEMI_EMA)
-
-        # if ni < __C.BURN_UP:
-        #     if scalar is not None:
-        #         with th.cuda.amp.autocast():
-        #             loss_sup, loss_det_sup, loss_seg_sup = student(image_iter, ref_iter, det_label=box_iter,
-        #                                                            seg_label=mask_iter, image_lab_iter=image_lab_iter,bitmask_full=bitmask_full)
-        #     else:
-        #         loss_sup, loss_det_sup, loss_seg_sup = student(image_iter, ref_iter, det_label=box_iter,
-        #                                                        seg_label=mask_iter, image_lab_iter=image_lab_iter,bitmask_full=bitmask_full)
-
         if ni < __C.BURN_UP:
             if scalar is not None:
                 with th.cuda.amp.autocast():
@@ -153,10 +123,10 @@ def train_one_epoch(__C,
                 loss_sup, loss_det_sup, loss_seg_sup = student(image_iter, ref_iter, det_label=box_iter,seg_label=mask_iter)
             loss = loss_sup
 
-        elif ni>=__C.BURN_UP and (
+        elif ni >= __C.BURN_UP and (
                 ni -  __C.BURN_UP
         ) % __C.SEMI_UPDATE_ITER == 0:
-            if ni==__C.BURN_UP:
+            if ni == __C.BURN_UP:
                 _update_teacher_model(student, teacher, word_size=len(__C.GPU), keep_rate=0.)
                 print("Going to semi-supervised stage...")
             # else:
@@ -189,17 +159,9 @@ def train_one_epoch(__C,
             pseudo_mask=F.interpolate(pseudo_mask,(h,w))
             image_iter = torch.cat([image_iter,image_iter_unlabel_resize.clone()],0).cuda(non_blocking=True)
             ref_iter = torch.cat([ref_iter, ref_iter_unlabel.clone()], 0).cuda(non_blocking=True)
-            # image_lab_iter = torch.cat([image_lab_iter, image_lab_iter.clone()], 0)
-            # bitmask_full=torch.cat([bitmask_full,bitmask_full.clone()],0)
             box_iter=torch.cat([box_iter,sized_pseudo_box],0).cuda(non_blocking=True)
             mask_iter=torch.cat([mask_iter,pseudo_mask],0).cuda(non_blocking=True)
-            # if scalar is not None:
-            #     with th.cuda.amp.autocast():
-            #         loss_sup, loss_det_sup, loss_seg_sup,loss_seg_semi = student(image_iter, ref_iter, det_label=box_iter,
-            #                                                        seg_label=mask_iter, image_lab_iter=image_lab_iter,bitmask_full=bitmask_full,semi=True)
-            # else:
-            #     loss_sup, loss_det_sup, loss_seg_sup,loss_seg_semi = student(image_iter, ref_iter, det_label=box_iter,
-            #                                                    seg_label=mask_iter, image_lab_iter=image_lab_iter,bitmask_full=bitmask_full,semi=True)
+
             if scalar is not None:
                 with th.cuda.amp.autocast():
                     loss_sup,loss_det_sup,loss_seg_sup,loss_semi,loss_det_semi,loss_seg_semi = student(image_iter,ref_iter,det_label=box_iter,seg_label=mask_iter,semi=True)
@@ -207,7 +169,7 @@ def train_one_epoch(__C,
                 loss_sup,loss_det_sup,loss_seg_sup,loss_semi,loss_det_semi,loss_seg_semi = student(image_iter,ref_iter,det_label=box_iter,seg_label=mask_iter,semi=True)
 
             loss=loss_sup+loss_semi*__C.SEMI_LOSS_WEIGHT
-            # loss=loss_sup
+
         optimizer.zero_grad()
         if scalar is not None:
             scalar.scale(loss).backward()
