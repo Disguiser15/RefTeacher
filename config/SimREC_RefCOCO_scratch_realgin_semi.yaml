@@ -22,7 +22,7 @@ MODEL:
 
 
 TRAIN:
-  GPU: [0,1,2,3]
+  GPU: [0,1]
   BATCH_SIZE: 16 # total batch size on a single node if multiprocessing_distributed else batch size on one gpu
   NUM_WORKER: 8 # same as BATCH_SIZE
   LR: 0.0001
@@ -30,7 +30,7 @@ TRAIN:
   DECAY_EPOCHS: [30, 35,37] # valuable
   LR_DECAY_R: 0.2
   PRINT_FREQ: 100
-  LOG_PATH: './logs/det_base_refcoco_baseline_realgin_10%_90%_t-s_only_confidence_val_no_resize_bs16_burn3_unsup1_pin_false' 
+  LOG_PATH: './logs/det_base_refcoco_baseline_realgin_10%_90%_t-s_only_confidence_val_no_resize_bs16_burn3_unsupzero5_pin_false'
   LOG_IMAGE: False # plot predictions on tensorboard
   PRETRAIN_WEIGHT: './data/weights/darknet.weights'
   VL_PRETRAIN_WEIGHT: ''
@@ -46,7 +46,7 @@ TRAIN:
   GRAD_NORM_CLIP: 0.15
   AMP: False
   SEED: 123456
-  SEMI_LOSS_WEIGHT: 1.0
+  SEMI_LOSS_WEIGHT: 0.5
   BURN_UP: 7200
   BURN_UP_EPOCH: 3
   SEMI_UPDATE_ITER: 1
