@@ -136,13 +136,15 @@ def train_one_epoch(__C,
                 pseudo_box, pseudo_mask = teacher(image_iter_unlabel, ref_iter_unlabel)
                 info_iter_unlabel=info_iter_unlabel.cpu().numpy()
                 pseudo_box=pseudo_box.squeeze(1).cpu().numpy()
-                ###predictions to gt
+                ###predictions to gt(x1,y1,x2,y2)
                 for i in range(len(gt_box_iter_unlabel)):
                     pseudo_box[i]=yolobox2label(pseudo_box[i],info_iter_unlabel[i])
+                # (x1,y1,x2,y2)->(x,y,w,h)
                 pseudo_box[:, 2] = (pseudo_box[:, 2]-pseudo_box[:, 0])
                 pseudo_box[:, 3] = (pseudo_box[:, 3]-pseudo_box[:, 1])
                 from datasets.dataloader import label2yolobox
                 sized_pseudo_box = np.zeros((len(gt_box_iter_unlabel),5))
+                # (x,y,w,h)->yolo
                 for i in range(len(gt_box_iter_unlabel)):
                     sized_pseudo_box[i]=label2yolobox(pseudo_box[i].reshape(1,-1),tuple(info_iter_unlabel[i]),__C.INPUT_SHAPE[0],lrflip=__C.FLIP_LR)
                 sized_pseudo_box = torch.from_numpy(sized_pseudo_box[:, :4]).cuda(non_blocking=True)
