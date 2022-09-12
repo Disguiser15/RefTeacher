@@ -17,6 +17,126 @@ from utils.utils import  EMA
 from collections import OrderedDict
 import torch
 
+def validate_iter(__C,
+                  net,
+                  loader,
+                  writer,
+                  epoch,
+                  iter,
+                  rank,
+                  ix_to_token,
+                  save_ids=None,
+                  prefix='Val',
+                  ema=None,
+                  student=True):
+    if ema is not None:
+        ema.apply_shadow()
+    net.eval()
+
+    batches = len(loader)
+    batch_time = AverageMeter('Time', ':6.5f')
+    data_time = AverageMeter('Data', ':6.5f')
+    losses = AverageMeter('Loss', ':.4f')
+    box_ap = AverageMeter('BoxIoU@0.5', ':6.2f')
+    mask_ap = AverageMeter('MaskIoU', ':6.2f')
+    inconsistency_error = AverageMeter('IE', ':6.2f')
+    mask_aps={}
+    for item in np.arange(0.5, 1, 0.05):
+        mask_aps[item]=[]
+    meters = [batch_time, data_time, losses, box_ap, mask_ap,inconsistency_error]
+    meters_dict = {meter.name: meter for meter in meters}
+    progress = ProgressMeter(__C.VERSION, __C.EPOCHS, len(loader), meters, prefix=prefix+': ')
+    with th.no_grad():
+        end = time.time()
+        for ith_batch, data in enumerate(loader):
+            ref_iter, image_iter, mask_iter, box_iter,gt_box_iter, mask_id, info_iter = data
+            ref_iter = ref_iter.cuda( non_blocking=True)
+            image_iter = image_iter.cuda( non_blocking=True)
+            box_iter = box_iter.cuda( non_blocking=True)
+            box, mask= net(image_iter, ref_iter)
+
+
+            gt_box_iter=gt_box_iter.squeeze(1)
+            gt_box_iter[:, 2] = (gt_box_iter[:, 0] + gt_box_iter[:, 2])
+            gt_box_iter[:, 3] = (gt_box_iter[:, 1] + gt_box_iter[:, 3])
+            gt_box_iter=gt_box_iter.cpu().numpy()
+            info_iter=info_iter.cpu().numpy()
+            box=box.squeeze(1).cpu().numpy()
+            pred_box_vis=box.copy()
+
+            ###predictions to gt
+            for i in range(len(gt_box_iter)):
+                box[i]=yolobox2label(box[i],info_iter[i])
+
+
+            box_iou=batch_box_iou(torch.from_numpy(gt_box_iter),torch.from_numpy(box)).cpu().numpy()
+            seg_iou=[]
+            mask=mask.cpu().numpy()
+            for i, mask_pred in enumerate(mask):
+                if writer is not None and save_ids is not None and ith_batch*__C.BATCH_SIZE+i in save_ids:
+                    ixs=ref_iter[i].cpu().numpy()
+                    words=[]
+                    for ix in ixs:
+                        if ix >0:
+                            words.append(ix_to_token[ix])
+                    sent=' '.join(words)
+                    box_iter = box_iter.view(box_iter.shape[0], -1) * __C.INPUT_SHAPE[0]
+                    box_iter[:, 0] = box_iter[:, 0] - 0.5 * box_iter[:, 2]
+                    box_iter[:, 1] = box_iter[:, 1] - 0.5 * box_iter[:, 3]
+                    box_iter[:, 2] = box_iter[:, 0] + box_iter[:, 2]
+                    box_iter[:, 3] = box_iter[:, 1] + box_iter[:, 3]
+                    det_image=draw_visualization(normed2original(image_iter[i],__C.MEAN,__C.STD),sent,pred_box_vis[i].cpu().numpy(),box_iter[i].cpu().numpy())
+                    writer.add_image('image/' + str(ith_batch * __C.BATCH_SIZE + i) + '_det',det_image,epoch,dataformats='HWC')
+                    writer.add_image('image/' + str(ith_batch * __C.BATCH_SIZE + i) + '_seg', (mask[i,None]*255).astype(np.uint8))
+
+                # from pydensecrf import densecrf
+                # d = densecrf.DenseCRF2D(416, 416, 2)
+                # U = np.expand_dims(-np.log(mask_pred), axis=0)
+                # U_ = np.expand_dims(-np.log(1 - mask_pred), axis=0)
+                # unary = np.concatenate((U_, U), axis=0)
+                # unary = unary.reshape((2, -1))
+                # d.setUnaryEnergy(unary)
+                # d.addPairwiseGaussian(sxy=4, compat=3)
+                # d.addPairwiseBilateral(sxy=26, srgb=3, rgbim=np.ascontiguousarray((image_iter[i].cpu().numpy()*255).astype(np.uint8).transpose([1,2,0])), compat=10)
+                # Q = d.inference(5)
+                # mask_pred = np.argmax(Q, axis=0).reshape((416, 416)).astype(np.float32)
+
+
+                mask_gt=np.load(os.path.join(__C.MASK_PATH[__C.DATASET],'%d.npy'%mask_id[i]))
+                mask_pred=mask_processing(mask_pred,info_iter[i])
+
+                single_seg_iou,single_seg_ap=mask_iou(mask_gt,mask_pred)
+                for item in np.arange(0.5, 1, 0.05):
+                    mask_aps[item].append(single_seg_ap[item]*100.)
+                seg_iou.append(single_seg_iou)
+            seg_iou=np.array(seg_iou).astype(np.float32)
+
+            ie=(box_iou>=0.5).astype(np.float32)*(seg_iou<0.5).astype(np.float32)+(box_iou<0.5).astype(np.float32)*(seg_iou>=0.5).astype(np.float32)
+            inconsistency_error.update(ie.mean()*100., ie.shape[0])
+            box_ap.update((box_iou>0.5).astype(np.float32).mean()*100., box_iou.shape[0])
+            mask_ap.update(seg_iou.mean()*100., seg_iou.shape[0])
+
+            reduce_meters(meters_dict, rank, __C)
+
+            if (ith_batch % __C.PRINT_FREQ == 0 or ith_batch==(len(loader)-1)) and main_process(__C,rank):
+                progress.display(epoch, ith_batch)
+            batch_time.update(time.time() - end)
+            end = time.time()
+
+        if main_process(__C,rank) and writer is not None:
+            writer.add_scalar("Acc/BoxIoU@0.5_100", box_ap.avg_reduce, global_step=iter)
+            if student == True:
+                writer.add_scalar("Acc/BoxIoU@0.5_student_100", box_ap.avg_reduce, global_step=iter)
+            else:
+                writer.add_scalar("Acc/BoxIoU@0.5_teacher_100", box_ap.avg_reduce, global_step=iter)
+            # writer.add_scalar("Acc/MaskIoU", mask_ap.avg_reduce, global_step=epoch)
+            # writer.add_scalar("Acc/IE", inconsistency_error.avg_reduce, global_step=epoch)
+            # for item in mask_aps:
+            #     writer.add_scalar("Acc/MaskIoU@%.2f"%item, np.array(mask_aps[item]).mean(), global_step=epoch)
+    if ema is not None:
+        ema.restore()
+    return box_ap.avg_reduce, mask_ap.avg_reduce
+
 @torch.no_grad()
 def _update_teacher_model(student,teacher,word_size,keep_rate=0.9996):
     student_model_dict = student.state_dict()
@@ -56,17 +176,23 @@ def train_one_epoch(__C,
                     scheduler,
                     loader_label,
                     loader_unlabel,
+                    val_loader,
+                    ix_to_token,
                     scalar,
                     writer,
                     epoch,
                     rank,
+                    best_det_acc_teacher,
+                    best_det_acc_student,
+                    best_teacher_step,
+                    best_student_step,
                     ema=None):
     student.train()
     if __C.MULTIPROCESSING_DISTRIBUTED:
         loader_label.sampler.set_epoch(epoch)
         loader_unlabel.sampler.set_epoch(epoch)
-        loader_label.set_length(max(len(loader_label),len(loader_unlabel)))
-        loader_unlabel.set_length(max(len(loader_label),len(loader_unlabel)))
+    loader_label.set_length(max(len(loader_label),len(loader_unlabel)))
+    loader_unlabel.set_length(max(len(loader_label),len(loader_unlabel)))
     loader = enumerate(zip(loader_label,loader_unlabel))
     # batches = max(len(loader_label),len(loader_unlabel))
     # nb=max(len(loader_label),len(loader_unlabel))
@@ -91,13 +217,6 @@ def train_one_epoch(__C,
         ni=ith_batch+epoch*nb
         data_time.update(time.time() - end)
 
-        # ref_iter,image_iter,image_lab_iter,mask_iter,bitmask_full,box_iter,gt_box_iter,mask_id,info_iter= data
-        # ref_iter = ref_iter.cuda(non_blocking=True)
-        # image_iter = image_iter.cuda(non_blocking=True)
-        # image_lab_iter= image_lab_iter.cuda(non_blocking=True)
-        # mask_iter = mask_iter.cuda(non_blocking=True)
-        # box_iter = box_iter.cuda( non_blocking=True)
-        # bitmask_full= bitmask_full.cuda( non_blocking=True)
 
         (ref_iter,image_iter,mask_iter,box_iter,gt_box_iter,mask_id,info_iter), (
             ref_iter_unlabel,image_iter_unlabel,mask_iter_unlabel,box_iter_unlabel,gt_box_iter_unlabel,mask_id_unlabel,info_iter_unlabel) = data
@@ -122,17 +241,7 @@ def train_one_epoch(__C,
         else:
             image_iter_unlabel_resize=image_iter_unlabel.clone()
 
-        # _update_teacher_model(student, teacher, word_size=len(__C.GPU), keep_rate=__C.SEMI_EMA)
-
-        # if ni < __C.BURN_UP:
-        #     if scalar is not None:
-        #         with th.cuda.amp.autocast():
-        #             loss_sup, loss_det_sup, loss_seg_sup = student(image_iter, ref_iter, det_label=box_iter,
-        #                                                            seg_label=mask_iter, image_lab_iter=image_lab_iter,bitmask_full=bitmask_full)
-        #     else:
-        #         loss_sup, loss_det_sup, loss_seg_sup = student(image_iter, ref_iter, det_label=box_iter,
-        #                                                        seg_label=mask_iter, image_lab_iter=image_lab_iter,bitmask_full=bitmask_full)
-
+        student.train()
         if ni < __C.BURN_UP:
             if scalar is not None:
                 with th.cuda.amp.autocast():
@@ -147,7 +256,8 @@ def train_one_epoch(__C,
             if ni==__C.BURN_UP:
                 _update_teacher_model(student, teacher, word_size=len(__C.GPU), keep_rate=0.)
                 print("Going to semi-supervised stage...")
-
+            # else:
+            #     _update_teacher_model(student, teacher, word_size=len(__C.GPU), keep_rate=__C.SEMI_EMA)
             teacher.eval()
             with torch.no_grad():
                 pseudo_box, pseudo_mask = teacher(image_iter_unlabel, ref_iter_unlabel)
@@ -165,7 +275,6 @@ def train_one_epoch(__C,
                 sized_pseudo_box = torch.from_numpy(sized_pseudo_box[:, :4]).cuda(non_blocking=True)
                 pseudo_mask = pseudo_mask.unsqueeze(1)
                 sized_pseudo_box = sized_pseudo_box.unsqueeze(1)
-
 
             if len(__C.MULTI_SCALE)>1:
                 pseudo_mask=F.interpolate(pseudo_mask,(h,w))
@@ -225,16 +334,52 @@ def train_one_epoch(__C,
             writer.add_scalar("loss_semi/train", losses_semi.avg_reduce, global_step=global_step)
             writer.add_scalar("loss_det_semi/train", losses_det_semi.avg_reduce, global_step=global_step)
             writer.add_scalar("loss_seg_semi/train", losses_seg_semi.avg_reduce, global_step=global_step)
+            writer.add_scalar("lr/train", optimizer.param_groups[0]["lr"], global_step=global_step)
             if ith_batch % __C.PRINT_FREQ == 0 or ith_batch==batches:
                 progress.display(epoch, ith_batch)
         # break
         batch_time.update(time.time() - end)
+
+        step = epoch * batches + ith_batch
+        if step % __C.VALIDATE_FREQ == 0 and step != 0:
+            box_ap_student,mask_ap=validate_iter(__C,student,val_loader,writer,epoch,step,rank,ix_to_token,ema=ema,student=True)
+        if step % __C.VALIDATE_FREQ == 0 and step != 0 and step >= __C.BURN_UP:
+            box_ap_teacher,mask_ap=validate_iter(__C,teacher,val_loader,writer,epoch,step,rank,ix_to_token,ema=ema,student=False)
+
+        if main_process(__C,rank) and step % __C.VALIDATE_FREQ == 0 and step != 0:
+            if ema is not None:
+                ema.apply_shadow()
+            if step >= __C.BURN_UP:
+                if box_ap_teacher>best_det_acc_teacher:
+                    best_det_acc_teacher=box_ap_teacher
+                    best_teacher_step = step
+                    torch.save({'epoch': epoch + 1, 'state_dict': teacher.state_dict(), 'optimizer': optimizer.state_dict(),
+                                'scheduler': scheduler.state_dict(),'lr':optimizer.param_groups[0]["lr"],},
+                               os.path.join(__C.LOG_PATH, str(__C.VERSION),'ckpt', 'det_best_teacher.pth'))
+                    print('Save teacher checkpoint...')
+                print('Teacher best acc: ', best_det_acc_teacher)
+                print('Teacher best step: ', best_teacher_step)
+            if step >= __C.VALIDATE_FREQ:
+                if box_ap_student>best_det_acc_student:
+                    best_det_acc_student=box_ap_student
+                    best_student_step = step
+                    torch.save({'epoch': epoch + 1, 'state_dict': student.state_dict(), 'optimizer': optimizer.state_dict(),
+                                'scheduler': scheduler.state_dict(),'lr':optimizer.param_groups[0]["lr"],},
+                               os.path.join(__C.LOG_PATH, str(__C.VERSION),'ckpt', 'det_best_student.pth'))
+                    print('Save student checkpoint...')
+                print('Student best acc: ', best_det_acc_student)
+                print('Student best step: ', best_student_step)
+
+            if ema is not None:
+                ema.restore()
         end = time.time()
+    return best_det_acc_teacher,best_det_acc_student,best_teacher_step,best_student_step
+
 
 def main_worker(gpu,__C):
-    global best_det_acc_teacher,best_det_acc_student,best_seg_acc,best_teacher_epoch,best_student_epoch
+    global best_det_acc_teacher,best_det_acc_student,best_seg_acc,best_teacher_step,best_student_step
     best_det_acc_teacher,best_det_acc_student,best_seg_acc=0.,0.,0.
-    best_teacher_epoch,best_student_epoch=0,0
+    best_teacher_step,best_student_step=0,0
     if __C.MULTIPROCESSING_DISTRIBUTED:
         if __C.DIST_URL == "env://" and __C.RANK == -1:
             __C.RANK = int(os.environ["RANK"])
@@ -354,44 +499,15 @@ def main_worker(gpu,__C):
     for ith_epoch in range(start_epoch, __C.EPOCHS):
         if __C.USE_EMA and ema is None:
             ema = EMA(student, 0.9997)
-        train_one_epoch(__C,teacher,student,optimizer,scheduler,train_loader_label,train_loader_unlabel,scalar,writer,ith_epoch,gpu,ema)
-        box_ap_student,mask_ap=validate_semi(__C,student,val_loader,writer,ith_epoch,gpu,val_set.ix_to_token,save_ids=save_ids,ema=ema,student=True)
-        box_ap_teacher,mask_ap=validate_semi(__C,teacher,val_loader,writer,ith_epoch,gpu,val_set.ix_to_token,save_ids=save_ids,ema=ema,student=False)
-        if main_process(__C,gpu):
-            if ema is not None:
-                ema.apply_shadow()
-            torch.save({'epoch': ith_epoch + 1, 'state_dict': teacher.state_dict(), 'optimizer': optimizer.state_dict(),
-                        'scheduler': scheduler.state_dict(),'lr':optimizer.param_groups[0]["lr"],},
-                       os.path.join(__C.LOG_PATH, str(__C.VERSION),'ckpt', 'last.pth'))
-            if box_ap_teacher>best_det_acc_teacher:
-                best_det_acc_teacher=box_ap_teacher
-                best_teacher_epoch = ith_epoch
-                torch.save({'epoch': ith_epoch + 1, 'state_dict': teacher.state_dict(), 'optimizer': optimizer.state_dict(),
-                            'scheduler': scheduler.state_dict(),'lr':optimizer.param_groups[0]["lr"],},
-                           os.path.join(__C.LOG_PATH, str(__C.VERSION),'ckpt', 'det_best_teacher.pth'))
-                print('Save teacher checkpoint...')
-            print('Teacher best acc: ', best_det_acc_teacher)
-            print('Teacher best epoch: ', best_teacher_epoch)
-            if box_ap_student>best_det_acc_student:
-                best_det_acc_student=box_ap_student
-                best_student_epoch = ith_epoch
-                torch.save({'epoch': ith_epoch + 1, 'state_dict': student.state_dict(), 'optimizer': optimizer.state_dict(),
-                            'scheduler': scheduler.state_dict(),'lr':optimizer.param_groups[0]["lr"],},
-                           os.path.join(__C.LOG_PATH, str(__C.VERSION),'ckpt', 'det_best_student.pth'))
-                print('Save student checkpoint...')
-            print('Student best acc: ', best_det_acc_student)
-            print('Student best epoch: ', best_student_epoch)
-
-            if ema is not None:
-                ema.restore()
+        best_det_acc_teacher,best_det_acc_student,best_teacher_step,best_student_step = train_one_epoch(__C,teacher,student,optimizer,scheduler,train_loader_label,train_loader_unlabel,val_loader,val_set.ix_to_token,scalar,writer,ith_epoch,gpu,best_det_acc_teacher,best_det_acc_student,best_teacher_step,best_student_step,ema)
     if __C.MULTIPROCESSING_DISTRIBUTED:
         cleanup_distributed()
 
 
 def main():
     parser = argparse.ArgumentParser(description="SimREC")
-    # parser.add_argument('--config', type=str, default='./config/SimREC_RefCOCO_scratch_realgin_semi_copy.yaml')
-    parser.add_argument('--config', type=str, required=True, default='./config/refcoco.yaml')
+    parser.add_argument('--config', type=str, default='./config/SimREC_RefCOCO_scratch_realgin_baseline_iter_modified.yaml')
+    # parser.add_argument('--config', type=str, required=True, default='./config/refcoco.yaml')
     args=parser.parse_args()
     assert args.config is not None
     __C = config.load_cfg_from_cfg_file(args.config)

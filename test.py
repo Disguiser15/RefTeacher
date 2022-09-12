@@ -137,6 +137,124 @@ def validate(__C,
         ema.restore()
     return box_ap.avg_reduce, mask_ap.avg_reduce
 
+def validate_semi(__C,
+                  net,
+                  loader,
+                  writer,
+                  epoch,
+                  rank,
+                  ix_to_token,
+                  save_ids=None,
+                  prefix='Val',
+                  ema=None,
+                  student=True):
+    if ema is not None:
+        ema.apply_shadow()
+    net.eval()
+
+    batches = len(loader)
+    batch_time = AverageMeter('Time', ':6.5f')
+    data_time = AverageMeter('Data', ':6.5f')
+    losses = AverageMeter('Loss', ':.4f')
+    box_ap = AverageMeter('BoxIoU@0.5', ':6.2f')
+    mask_ap = AverageMeter('MaskIoU', ':6.2f')
+    inconsistency_error = AverageMeter('IE', ':6.2f')
+    mask_aps={}
+    for item in np.arange(0.5, 1, 0.05):
+        mask_aps[item]=[]
+    meters = [batch_time, data_time, losses, box_ap, mask_ap,inconsistency_error]
+    meters_dict = {meter.name: meter for meter in meters}
+    progress = ProgressMeter(__C.VERSION, __C.EPOCHS, len(loader), meters, prefix=prefix+': ')
+    with th.no_grad():
+        end = time.time()
+        for ith_batch, data in enumerate(loader):
+            ref_iter, image_iter, mask_iter, box_iter,gt_box_iter, mask_id, info_iter = data
+            ref_iter = ref_iter.cuda( non_blocking=True)
+            image_iter = image_iter.cuda( non_blocking=True)
+            box_iter = box_iter.cuda( non_blocking=True)
+            box, mask= net(image_iter, ref_iter)
+
+
+            gt_box_iter=gt_box_iter.squeeze(1)
+            gt_box_iter[:, 2] = (gt_box_iter[:, 0] + gt_box_iter[:, 2])
+            gt_box_iter[:, 3] = (gt_box_iter[:, 1] + gt_box_iter[:, 3])
+            gt_box_iter=gt_box_iter.cpu().numpy()
+            info_iter=info_iter.cpu().numpy()
+            box=box.squeeze(1).cpu().numpy()
+            pred_box_vis=box.copy()
+
+            ###predictions to gt
+            for i in range(len(gt_box_iter)):
+                box[i]=yolobox2label(box[i],info_iter[i])
+
+
+            box_iou=batch_box_iou(torch.from_numpy(gt_box_iter),torch.from_numpy(box)).cpu().numpy()
+            seg_iou=[]
+            mask=mask.cpu().numpy()
+            for i, mask_pred in enumerate(mask):
+                if writer is not None and save_ids is not None and ith_batch*__C.BATCH_SIZE+i in save_ids:
+                    ixs=ref_iter[i].cpu().numpy()
+                    words=[]
+                    for ix in ixs:
+                        if ix >0:
+                            words.append(ix_to_token[ix])
+                    sent=' '.join(words)
+                    box_iter = box_iter.view(box_iter.shape[0], -1) * __C.INPUT_SHAPE[0]
+                    box_iter[:, 0] = box_iter[:, 0] - 0.5 * box_iter[:, 2]
+                    box_iter[:, 1] = box_iter[:, 1] - 0.5 * box_iter[:, 3]
+                    box_iter[:, 2] = box_iter[:, 0] + box_iter[:, 2]
+                    box_iter[:, 3] = box_iter[:, 1] + box_iter[:, 3]
+                    det_image=draw_visualization(normed2original(image_iter[i],__C.MEAN,__C.STD),sent,pred_box_vis[i].cpu().numpy(),box_iter[i].cpu().numpy())
+                    writer.add_image('image/' + str(ith_batch * __C.BATCH_SIZE + i) + '_det',det_image,epoch,dataformats='HWC')
+                    writer.add_image('image/' + str(ith_batch * __C.BATCH_SIZE + i) + '_seg', (mask[i,None]*255).astype(np.uint8))
+
+                # from pydensecrf import densecrf
+                # d = densecrf.DenseCRF2D(416, 416, 2)
+                # U = np.expand_dims(-np.log(mask_pred), axis=0)
+                # U_ = np.expand_dims(-np.log(1 - mask_pred), axis=0)
+                # unary = np.concatenate((U_, U), axis=0)
+                # unary = unary.reshape((2, -1))
+                # d.setUnaryEnergy(unary)
+                # d.addPairwiseGaussian(sxy=4, compat=3)
+                # d.addPairwiseBilateral(sxy=26, srgb=3, rgbim=np.ascontiguousarray((image_iter[i].cpu().numpy()*255).astype(np.uint8).transpose([1,2,0])), compat=10)
+                # Q = d.inference(5)
+                # mask_pred = np.argmax(Q, axis=0).reshape((416, 416)).astype(np.float32)
+
+
+                mask_gt=np.load(os.path.join(__C.MASK_PATH[__C.DATASET],'%d.npy'%mask_id[i]))
+                mask_pred=mask_processing(mask_pred,info_iter[i])
+
+                single_seg_iou,single_seg_ap=mask_iou(mask_gt,mask_pred)
+                for item in np.arange(0.5, 1, 0.05):
+                    mask_aps[item].append(single_seg_ap[item]*100.)
+                seg_iou.append(single_seg_iou)
+            seg_iou=np.array(seg_iou).astype(np.float32)
+
+            ie=(box_iou>=0.5).astype(np.float32)*(seg_iou<0.5).astype(np.float32)+(box_iou<0.5).astype(np.float32)*(seg_iou>=0.5).astype(np.float32)
+            inconsistency_error.update(ie.mean()*100., ie.shape[0])
+            box_ap.update((box_iou>0.5).astype(np.float32).mean()*100., box_iou.shape[0])
+            mask_ap.update(seg_iou.mean()*100., seg_iou.shape[0])
+
+            reduce_meters(meters_dict, rank, __C)
+
+            if (ith_batch % __C.PRINT_FREQ == 0 or ith_batch==(len(loader)-1)) and main_process(__C,rank):
+                progress.display(epoch, ith_batch)
+            batch_time.update(time.time() - end)
+            end = time.time()
+
+        if main_process(__C,rank) and writer is not None:
+            writer.add_scalar("Acc/BoxIoU@0.5", box_ap.avg_reduce, global_step=epoch)
+            if student == True:
+                writer.add_scalar("Acc/BoxIoU@0.5_student", box_ap.avg_reduce, global_step=epoch)
+            else:
+                writer.add_scalar("Acc/BoxIoU@0.5_teacher", box_ap.avg_reduce, global_step=epoch)
+            writer.add_scalar("Acc/MaskIoU", mask_ap.avg_reduce, global_step=epoch)
+            writer.add_scalar("Acc/IE", inconsistency_error.avg_reduce, global_step=epoch)
+            for item in mask_aps:
+                writer.add_scalar("Acc/MaskIoU@%.2f"%item, np.array(mask_aps[item]).mean(), global_step=epoch)
+    if ema is not None:
+        ema.restore()
+    return box_ap.avg_reduce, mask_ap.avg_reduce
 
 def main_worker(gpu,__C):
     global best_det_acc,best_seg_acc
@@ -192,7 +310,7 @@ def main_worker(gpu,__C):
         net.cuda()
     else:
         net = DP(net.cuda())
- #       net = DP(net)
+    #       net = DP(net)
     if main_process(__C, gpu):
         print(__C)
         # print(net)
