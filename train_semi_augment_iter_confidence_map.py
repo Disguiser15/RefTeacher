@@ -293,8 +293,8 @@ def train_one_epoch(__C,
                     pseudo_mask = pseudo_mask[chosen_index[0],...].clone()
                 student.train()
             
-            check_x = sized_pseudo_box[...,0]==1
-            check_y = sized_pseudo_box[...,1]==1
+            check_x = sized_pseudo_box[...,0]>=1
+            check_y = sized_pseudo_box[...,1]>=1
             check = (check_x + check_y)==False
             if False in check:
                 chosen_index = np.where(check==True)

@@ -664,7 +664,7 @@ class RefCOCODataSet_semi(Data.Dataset):
             input_dict_q = input_dict.copy()
             input_dict_w, percent_w = self.transforms_w(input_dict_w, percent) # weak augmentation
             input_dict_q_process, percent_q = self.transforms_q(input_dict_q, percent) # strong augmentation
-            while input_dict_q_process['box'][:,0]==1 or input_dict_q_process['box'][:,1]==1 or input_dict_q_process['box'][:,2]==0 or input_dict_q_process['box'][:,3]==0:
+            while input_dict_q_process['box'][:,0]>=1 or input_dict_q_process['box'][:,1]>=1 or input_dict_q_process['box'][:,2]==0 or input_dict_q_process['box'][:,3]==0:
                 input_dict_copy = input_dict.copy()
                 input_dict_q_process, percent=self.transforms_q(input_dict_copy, percent)
 
@@ -690,7 +690,7 @@ class RefCOCODataSet_semi(Data.Dataset):
         else:
             input_dict_original = input_dict.copy()
             input_dict_process, percent=self.transforms(input_dict, percent)
-            while input_dict_process['box'][:,0]==1 or input_dict_process['box'][:,1]==1 or input_dict_process['box'][:,2]==0 or input_dict_process['box'][:,3]==0:
+            while input_dict_process['box'][:,0]>=1 or input_dict_process['box'][:,1]>=1 or input_dict_process['box'][:,2]==0 or input_dict_process['box'][:,3]==0:
                 input_dict_original_copy = input_dict_original.copy()
                 input_dict_process, percent=self.transforms(input_dict_original_copy, percent)
             # print(input_dict['box']*self.input_shape[0])
