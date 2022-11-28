@@ -41,9 +41,11 @@ class head(nn.Module):
         self.dconv = nn.Conv2d(in_channels=in_ch,
                               out_channels=self.n_anchors * (self.n_classes + 5),
                               kernel_size=1, stride=1, padding=0)
+        self.add = __C.ADD
+        self.att_weight = __C.ATT_WEIGHT
 
 
-    def forward(self, xin,yin, x_label=None,y_label=None,semi=False):
+    def forward(self, xin,yin, x_label=None,y_label=None,semi=False,att_prediction=None,att_target=None,confidence_map=None,weight=None):
         """
         In this
         Args:
@@ -66,6 +68,7 @@ class head(nn.Module):
             loss_l2 (torch.Tensor): total l2 loss - only for logging.
         """
         output = self.dconv(xin)
+
         batchsize = output.shape[0]
         fsize = output.shape[2]
         n_ch = 5 + self.n_classes
@@ -100,6 +103,7 @@ class head(nn.Module):
         pred[..., 3] = torch.exp(pred[..., 3]) * h_anchors
 
         if x_label is None:  # not training
+            confidence_map = pred[...,4].clone()
             pred[..., :4] *= self.stride
             pred=pred.view(batchsize,-1,n_ch)
             #xc,yc,,w,h->xmin,ymin,xmax,ymax
@@ -110,7 +114,7 @@ class head(nn.Module):
             score=pred[:,:,4].sigmoid()
             ind=torch.argmax(score,-1).unsqueeze(1).unsqueeze(1).repeat(1,1,n_ch)
             pred=torch.gather(pred,1,ind)
-            return pred.view(batchsize,-1),torch.zeros(batchsize,fsize*self.stride,fsize*self.stride).to(pred.device)
+            return pred.view(batchsize,-1),torch.zeros(batchsize,fsize*self.stride,fsize*self.stride).to(pred.device), confidence_map.to(pred.device)
 
         pred = pred[..., :4].data
 
@@ -212,7 +216,10 @@ class head(nn.Module):
             loss_wh_sup = self.l2_loss(output[:self.bs_label,..., 2:4], target[:self.bs_label,..., 2:4]) / 2
             loss_obj_sup = self.bce_loss(output[:self.bs_label,..., 4], target[:self.bs_label,..., 4])
             if output.size(0) != self.bs_label:
-                loss_obj_unsup = self.bce_loss(output[self.bs_label:,..., 4], target[self.bs_label:,..., 4])
+                if self.add == True:
+                    loss_obj_unsup = nn.BCELoss(weight=weight.view(weight.size(0),1,1,1).expand_as(target[self.bs_label:,..., 4]))(output[self.bs_label:,..., 4], target[self.bs_label:,..., 4]) + self.att_weight*self.l2_loss(att_prediction[self.bs_label:,...], att_target)
+                else:
+                    loss_obj_unsup = self.att_weight*self.l2_loss(att_prediction[self.bs_label:,...], att_target)
             else:
                 loss_obj_unsup = torch.zeros_like(loss_obj_sup)
             loss_det_sup = loss_xy_sup + loss_wh_sup + loss_obj_sup

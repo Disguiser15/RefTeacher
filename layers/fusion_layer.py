@@ -102,18 +102,18 @@ class GaranAttention(nn.Module):
         kd=kd.permute(0,1,3,2).contiguous().view(-1, h_v*w_v, d_o//n_head) # (n*b) x lk x dk
         v = v.permute(0,1,3,2).contiguous().view(-1, h_v*w_v, d_o//n_head) # (n*b) x lv x dv
 
-        output, m_attn = self.attention(q, kc,kd, v)
+        output, m_attn = self.attention(q, kc,kd, v) # [B,169,256] [B*2,169]
         #n * b, h * w, d_o
         output = output.view(sz_b,n_head, h_v,w_v, d_o//n_head)
         output = output.permute(0,1,4,3,2).contiguous().view(sz_b,-1, h_v,w_v) # b x lq x (n*dv)
-        m_attn=m_attn.view(sz_b,n_head, h_v*w_v)
+        m_attn=m_attn.view(sz_b,n_head, h_v*w_v) # [B,2,169]
         # m_attn=m_attn.mean(1)
 
 
         #residual connect
-        output=self.w_o(output)
-        attn=output
-        m_attn=self.w_m(attn).view(sz_b, h_v*w_v)
+        output=self.w_o(output) # [B,512,13,13]->[B,512,13,13]
+        attn=output # [B,512,13,13]
+        m_attn=self.w_m(attn).view(sz_b, h_v*w_v) # [16,169]
         output=self.layer_norm(output)
         output= output+residual
         output=self.layer_acti(output)

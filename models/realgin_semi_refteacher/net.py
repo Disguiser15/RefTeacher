@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from models.realgin_semi.head import head
+from models.realgin_semi_refteacher.head import head
 from models.language_encoder import language_encoder
 from models.visual_encoder import visual_encoder
 from layers.fusion_layer import SimpleFusion,MultiScaleFusion,AdaptiveFeatureSelection,GaranAttention
@@ -36,22 +36,22 @@ class Net(nn.Module):
         else:
             for param in module.parameters():
                 param.requires_grad = False
-    def forward(self, x,y, det_label=None,seg_label=None,semi=False):
+    def forward(self, x,y, det_label=None,seg_label=None,semi=False,att_target=None,confidence_map=None,weight=None):
         x=self.visual_encoder(x)
         y=self.lang_encoder(y)
         x=self.afs(y['flat_lang_feat'],x) # [B,512]
-        x,_,_=self.garan(y['flat_lang_feat'],x)
+        x,m_attn,attn=self.garan(y['flat_lang_feat'],x)
         x=self.fusion_manner(x,y['flat_lang_feat'])
         if self.training:
             if semi==True:
-                loss,loss_det,loss_seg,loss_semi,loss_det_semi,loss_seg_semi=self.head(x,None,det_label,seg_label,semi=True)
+                loss,loss_det,loss_seg,loss_semi,loss_det_semi,loss_seg_semi=self.head(x,None,det_label,seg_label,semi=True,att_prediction=attn,att_target=att_target,confidence_map=confidence_map,weight=weight)
                 return loss,loss_det,loss_seg,loss_semi,loss_det_semi,loss_seg_semi
             else:
                 loss,loss_det,loss_seg=self.head(x,None,det_label,seg_label,semi=False)
                 return loss,loss_det,loss_seg
         else:
-            box, mask=self.head(x,None)
-            return box,mask
+            box, mask, confidence_map=self.head(x,None)
+            return box,mask,attn,confidence_map
 
 
 if __name__ == '__main__':

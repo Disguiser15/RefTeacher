@@ -65,7 +65,7 @@ class EMA(object):
         self.buffer_keys = [k for k, _ in self.model.named_buffers()]
 
     def update_params(self):
-        decay = min(self.alpha, (self.step + 1) / (self.step + 10))
+        decay = self.alpha
         state = self.model.state_dict()
         for name in self.param_keys:
             self.shadow[name].copy_(

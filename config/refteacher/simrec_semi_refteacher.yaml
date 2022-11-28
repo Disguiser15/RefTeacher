@@ -1,0 +1,122 @@
+MODEL:
+  MODEL: 'simrec_semi_refteacher'
+  USE_GLOVE: True
+  WORD_EMBED_SIZE: 300
+  EMBED_FREEZE: True
+  HIDDEN_SIZE: 512
+  DROPOUT_R: 0.1
+  MULTI_HEAD: 8
+  FF_SIZE: 2048
+  FLAT_GLIMPSES: 1
+  LANG_ENC: 'lstm'
+  N_SA: 1
+  VIS_ENC: 'cspdarknet'
+  VIS_FEATS: [512,1024,2048] # the visual backbone output scales
+  VIS_PRETRAIN: True
+  VIS_FREEZE: True
+  ANCHORS: [[137, 256], [248, 272], [386, 271]]
+  ANCH_MASK: [[0, 1, 2]]
+  N_CLASSES: 0
+
+
+TRAIN:
+  GPU: [0]
+  BATCH_SIZE: 16 # total batch size on a single node if multiprocessing_distributed else batch size on one gpu
+  NUM_WORKER: 8 # same as BATCH_SIZE
+  LR: 0.0001
+  EPOCHS: 30
+  DECAY_EPOCHS: [30] # valuable
+  LR_DECAY_R: 0.2
+  PRINT_FREQ: 10
+  LOG_PATH: './logs/refteacher/simrec_refteacher_refcoco_10%'
+  LOG_IMAGE: False # plot predictions on tensorboard
+  PRETRAIN_WEIGHT: './data/weights/cspdarknet_coco.pth'
+  VL_PRETRAIN_WEIGHT: ''
+  RESUME_PATH: ''
+  SCHEDULER: 'step'
+  MIN_LR: 0.000001
+  WARMUP_LR: 0.0000001
+  WARMUP: 3
+  USE_EMA: True
+  LABEL_SMOOTH: 0.
+  OPT: Adam
+  OPT_PARAMS: {betas: '(0.9, 0.98)', eps: '1e-9'}
+  GRAD_NORM_CLIP: 0.15
+  AMP: False
+  SEED: 123456
+  SEMI_LOSS_WEIGHT: 0.5
+  BURN_UP: 24000
+  SEMI_UPDATE_ITER: 1
+  SEMI_EMA: 0.9996
+  FILTER: False
+  FILTER_THRE: 0.2
+  LISTEN: False
+  ADD: True
+  ATT_WEIGHT: 0.1
+
+
+VAL:
+  VALIDATE_FREQ: 100
+
+DISTRIBUTED:
+  # 1 on node 1, 0 on node 0
+  NODE_ID: 0
+  # number of nodes
+  WORLD_SIZE: 1
+  # 'tcp://IP_ADDR_NODE_0:FREEPORT' if multi nodes, 'tcp://127.0.0.1:FREEPORT' if single node
+  DIST_URL: "tcp://127.0.0.1:12345"
+  MULTIPROCESSING_DISTRIBUTED: True
+  RANK: 0
+
+AUGMENTATION:
+    MULTI_SCALE:  [[416,416]]
+    FLIP_LR: False
+    MIXUP: 0.
+    CUTMIX: 0.
+    DATA_AUGMENTATION: []
+    # candidate data augmentations: ['ElasticTransform','GridDistortion','RandAugment','RandomErasing']
+    AUG_SCALE: True
+    AUG_CROP: True
+    AUG_BLUR: False
+    AUG_TRANSLATE: True
+
+DATA:
+  DATASET: 'refcoco'
+  DATASET_LABEL: 'refcoco_label'
+  DATASET_UNLABEL: 'refcoco_unlabel'
+  MAX_TOKEN: 15
+  INPUT_SHAPE: [416,416]
+  MEAN: [0., 0., 0.]
+  STD: [1., 1., 1.]
+  ANN_PATH: {
+    'refcoco':'./data/anns/refcoco.json',
+    'refcoco_label':'./anns/refcoco/refcoco_10%_image.json',
+    'refcoco_unlabel':'./anns/refcoco/refcoco_90%_image.json',
+    'refcoco+': './data/anns/refcoco+.json',
+    'refcoco+_label':'./anns/refcoco+/refcoco+_10%_image.json',
+    'refcoco+_unlabel':'./anns/refcoco+/refcoco+_90%_image.json',
+    'refcocog': './data/anns/refcocog.json',
+    'refcocog_label':'./anns/refcocog/refcocog_10%_image.json',
+    'refcocog_unlabel':'./anns/refcocog/refcocog_90%_image.json',
+    'referit': './data/anns/refclef.json',
+    'flickr': './data/anns/flickr.json',
+    'vg': './data/anns/vg.json',
+    'merge':'./data/anns/merge.json'
+  }
+
+  IMAGE_PATH: {
+    'refcoco': './data/images/train2014',
+    'refcoco+': './data/images/train2014',
+    'refcocog': './data/images/train2014',
+    'referit': './data/images/refclef',
+    'flickr': './data/images/flickr',
+    'vg':'./data/images/VG',
+    'merge':'./data/images/'
+  }
+
+  MASK_PATH: {
+    'refcoco': './data/masks/refcoco',
+    'refcoco+': './data/masks/refcoco+',
+    'refcocog': './data/masks/refcocog',
+    'referit': './data/masks/refclef'
+  }

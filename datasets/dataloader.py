@@ -271,10 +271,10 @@ class RefCOCODataSet_semi(Data.Dataset):
         self.__C = __C
         self.split=split
         if sup == True:
-            assert  __C.DATASET in ['refcoco', 'refcoco_label', 'refcoco_unlabel', 'refcoco+', 'refcocog','referit','vg','merge']
+            assert  __C.DATASET in ['refcoco_label', 'refcoco_unlabel', 'refcoco+_label', 'refcoco+_unlabel', 'refcocog_label', 'refcocog_unlabel', 'refcoco+', 'refcoco', 'refcocog','referit','vg','merge']
         else:
-            assert  __C.DATASET_LABEL in ['refcoco', 'refcoco_label', 'refcoco_unlabel', 'refcoco+', 'refcocog','referit','vg','merge']
-            assert  __C.DATASET_UNLABEL in ['refcoco', 'refcoco_label', 'refcoco_unlabel', 'refcoco+', 'refcocog','referit','vg','merge']
+            assert  __C.DATASET_LABEL in ['refcoco_label', 'refcoco_unlabel', 'refcoco+_label', 'refcoco+_unlabel', 'refcocog_label', 'refcocog_unlabel', 'refcoco+', 'refcoco', 'refcocog','referit','vg','merge'] # ['refcoco_label', 'refcoco_unlabel', 'refcoco+_label', 'refcoco+_unlabel', 'refcocog_label', 'refcocog_unlabel', 'refcoco+', 'refcoco', 'refcocog','referit','vg','merge']
+            assert  __C.DATASET_UNLABEL in ['refcoco_label', 'refcoco_unlabel', 'refcoco+_label', 'refcoco+_unlabel', 'refcocog_label', 'refcocog_unlabel', 'refcoco+', 'refcoco', 'refcocog','referit','vg','merge']
         # --------------------------
         # ---- Raw data loading ---
         # --------------------------
@@ -571,7 +571,7 @@ def loader(__C,dataset: torch.utils.data.Dataset, rank: int, shuffle,drop_last=F
                                  shuffle=shuffle,
                                  sampler=dist_sampler,
                                  num_workers=__C.NUM_WORKER //len(__C.GPU),
-                                 pin_memory=True,
+                                 pin_memory=False,
                                  drop_last=drop_last)  # ,
                                 # prefetch_factor=_C['PREFETCH_FACTOR'])  only works in PyTorch 1.7.0
     else:
@@ -579,7 +579,7 @@ def loader(__C,dataset: torch.utils.data.Dataset, rank: int, shuffle,drop_last=F
                                  batch_size=__C.BATCH_SIZE,
                                  shuffle=shuffle,
                                  num_workers=__C.NUM_WORKER,
-                                 pin_memory=True,
+                                 pin_memory=False,
                                  drop_last=drop_last)
     return data_loader
 

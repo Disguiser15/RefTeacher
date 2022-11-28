@@ -6,13 +6,12 @@ from utils.logging import *
 import argparse
 import time
 from utils import config
-from datasets.dataloader import loader, RefCOCODataSet, RefCOCODataSet_semi
+from datasets.dataloader_augment import loader,RefCOCODataSet,RefCOCODataSet_semi
 from tensorboardX import SummaryWriter
 from utils.utils import *
 import torch.optim as Optim
 from importlib import import_module
-import torch.nn.functional as F
-from utils.utils import EMA
+from utils.utils import  EMA
 from collections import OrderedDict
 import torch
 
@@ -52,7 +51,7 @@ def validate_iter(__C,
             ref_iter = ref_iter.cuda( non_blocking=True)
             image_iter = image_iter.cuda( non_blocking=True)
             box_iter = box_iter.cuda( non_blocking=True)
-            box, mask= net(image_iter, ref_iter)
+            box, mask, att, confidence_map= net(image_iter, ref_iter)
 
 
             gt_box_iter=gt_box_iter.squeeze(1)
@@ -88,7 +87,6 @@ def validate_iter(__C,
                     writer.add_image('image/' + str(ith_batch * __C.BATCH_SIZE + i) + '_det',det_image,epoch,dataformats='HWC')
                     writer.add_image('image/' + str(ith_batch * __C.BATCH_SIZE + i) + '_seg', (mask[i,None]*255).astype(np.uint8))
 
-
                 mask_gt=np.load(os.path.join(__C.MASK_PATH[__C.DATASET],'%d.npy'%mask_id[i]))
                 mask_pred=mask_processing(mask_pred,info_iter[i])
 
@@ -111,10 +109,17 @@ def validate_iter(__C,
             end = time.time()
 
         if main_process(__C,rank) and writer is not None:
-            writer.add_scalar("Acc/BoxIoU@0.5_100", box_ap.avg_reduce, global_step=iter)
-            if student == True:
-                writer.add_scalar("Acc/BoxIoU@0.5_student_100", box_ap.avg_reduce, global_step=iter)
+            if __C.USE_EMA == False:
+                writer.add_scalar("Acc/BoxIoU@0.5_100", box_ap.avg_reduce, global_step=iter)
             else:
+                if (student == True and ema is None) or student == False:
+                    writer.add_scalar("Acc/BoxIoU@0.5_100", box_ap.avg_reduce, global_step=iter)
+            
+            if student == True and ema is not None:
+                writer.add_scalar("Acc/BoxIoU@0.5_student_ema_100", box_ap.avg_reduce, global_step=iter)
+            elif student == True and ema is None:
+                writer.add_scalar("Acc/BoxIoU@0.5_student_noema_100", box_ap.avg_reduce, global_step=iter)
+            elif student == False and ema is None:
                 writer.add_scalar("Acc/BoxIoU@0.5_teacher_100", box_ap.avg_reduce, global_step=iter)
     if ema is not None:
         ema.restore()
@@ -130,6 +135,7 @@ def _update_teacher_model(student,teacher,word_size,keep_rate=0.9996):
             new_teacher_dict[key] = (
                     student_model_dict[key] * (1 - keep_rate) + value * keep_rate
             )
+            # difference+=(student_model_dict[key]-value).sum()
         else:
             raise Exception("{} is not found in student model".format(key))
     teacher.load_state_dict(new_teacher_dict)
@@ -193,24 +199,18 @@ def train_one_epoch(__C,
 
 
         (ref_iter,image_iter,mask_iter,box_iter,gt_box_iter,mask_id,info_iter), (
-            ref_iter_unlabel,image_iter_unlabel,mask_iter_unlabel,box_iter_unlabel,gt_box_iter_unlabel,mask_id_unlabel,info_iter_unlabel) = data
+            ref_iter_unlabel_w,image_iter_unlabel_w,mask_iter_unlabel_w,box_iter_unlabel_w,gt_box_iter_unlabel_w,mask_id_unlabel_w,info_iter_unlabel_w,ref_iter_unlabel_q,image_iter_unlabel_q,mask_iter_unlabel_q,box_iter_unlabel_q,gt_box_iter_unlabel_q,mask_id_unlabel_q,info_iter_unlabel_q) = data
         ref_iter = ref_iter.cuda(non_blocking=True)
         image_iter = image_iter.cuda(non_blocking=True)
         mask_iter = mask_iter.cuda(non_blocking=True)
         box_iter = box_iter.cuda(non_blocking=True)
-        ref_iter_unlabel = ref_iter_unlabel.cuda(non_blocking=True)
-        image_iter_unlabel = image_iter_unlabel.cuda(non_blocking=True)
+        ref_iter_unlabel_w = ref_iter_unlabel_w.cuda(non_blocking=True)
+        image_iter_unlabel_w = image_iter_unlabel_w.cuda(non_blocking=True)
+        ref_iter_unlabel_q = ref_iter_unlabel_q.cuda(non_blocking=True)
+        image_iter_unlabel_q = image_iter_unlabel_q.cuda(non_blocking=True)
 
         loss_semi, loss_det_semi, loss_seg_semi=torch.zeros(1).cuda(),torch.zeros(1).cuda(),torch.zeros(1).cuda()
 
-        #random resize
-        if len(__C.MULTI_SCALE)>1:
-            h,w=__C.MULTI_SCALE[np.random.randint(0,len(__C.MULTI_SCALE))]
-            image_iter=F.interpolate(image_iter,(h,w))
-            mask_iter=F.interpolate(mask_iter,(h,w))
-            image_iter_unlabel_resize=F.interpolate(image_iter_unlabel,(h,w))
-        else:
-            image_iter_unlabel_resize=image_iter_unlabel.clone()
 
         student.train()
         if ni < __C.BURN_UP:
@@ -221,44 +221,85 @@ def train_one_epoch(__C,
                 loss_sup, loss_det_sup, loss_seg_sup = student(image_iter, ref_iter, det_label=box_iter,seg_label=mask_iter)
             loss = loss_sup
 
-        elif ni >= __C.BURN_UP and (
+        elif ni>=__C.BURN_UP and (
                 ni - __C.BURN_UP
         ) % __C.SEMI_UPDATE_ITER == 0:
-            if ni == __C.BURN_UP:
+            if ni==__C.BURN_UP:
                 _update_teacher_model(student, teacher, word_size=len(__C.GPU), keep_rate=0.)
                 print("Going to semi-supervised stage...")
 
             teacher.eval()
             with torch.no_grad():
-                pseudo_box, pseudo_mask = teacher(image_iter_unlabel, ref_iter_unlabel)
-                info_iter_unlabel=info_iter_unlabel.cpu().numpy()
+                pseudo_box, pseudo_mask, att, pseudo_confidence_map = teacher(image_iter_unlabel_w, ref_iter_unlabel_w)
+                info_iter_unlabel_w=info_iter_unlabel_w.cpu().numpy()
+                info_iter_unlabel_q=info_iter_unlabel_q.cpu().numpy()
+                weight = pseudo_box.squeeze(1)[...,4]
                 pseudo_box=pseudo_box.squeeze(1).cpu().numpy()
+                pseudo_att = att.detach().clone()
                 ###predictions to gt
-                for i in range(len(gt_box_iter_unlabel)):
-                    pseudo_box[i]=yolobox2label(pseudo_box[i],info_iter_unlabel[i])
+                for i in range(len(gt_box_iter_unlabel_w)):
+                    pseudo_box[i]=yolobox2label(pseudo_box[i],info_iter_unlabel_w[i])
                 pseudo_box[:, 2] = (pseudo_box[:, 2]-pseudo_box[:, 0])
                 pseudo_box[:, 3] = (pseudo_box[:, 3]-pseudo_box[:, 1])
                 from datasets.dataloader import label2yolobox
-                sized_pseudo_box = np.zeros((len(gt_box_iter_unlabel),5))
-                for i in range(len(gt_box_iter_unlabel)):
-                    sized_pseudo_box[i]=label2yolobox(pseudo_box[i].reshape(1,-1),tuple(info_iter_unlabel[i]),__C.INPUT_SHAPE[0],lrflip=__C.FLIP_LR)
+                sized_pseudo_box = np.zeros((len(gt_box_iter_unlabel_w),5))
+                for i in range(len(gt_box_iter_unlabel_w)):
+                    sized_pseudo_box[i]=label2yolobox(pseudo_box[i].reshape(1,-1),tuple(info_iter_unlabel_q[i]),__C.INPUT_SHAPE[0],lrflip=__C.FLIP_LR)
                 sized_pseudo_box = torch.from_numpy(sized_pseudo_box[:, :4]).cuda(non_blocking=True)
                 pseudo_mask = pseudo_mask.unsqueeze(1)
                 sized_pseudo_box = sized_pseudo_box.unsqueeze(1)
 
-            if len(__C.MULTI_SCALE)>1:
-                pseudo_mask=F.interpolate(pseudo_mask,(h,w))
-            image_iter = torch.cat([image_iter,image_iter_unlabel_resize.clone()],0).cuda(non_blocking=True)
-            ref_iter = torch.cat([ref_iter, ref_iter_unlabel.clone()],0).cuda(non_blocking=True)
+            if __C.FILTER == True:
+                filter = pseudo_box[:,4] > __C.FILTER_THRE
+                if False in filter:
+                    chosen_index = np.where(filter==True)
+                    image_iter_unlabel_q = image_iter_unlabel_q[chosen_index[0],...].clone()
+                    ref_iter_unlabel_q = ref_iter_unlabel_q[chosen_index[0],...].clone()
+                    sized_pseudo_box = sized_pseudo_box[chosen_index[0],...].clone()
+                    pseudo_mask = pseudo_mask[chosen_index[0],...].clone()
+                    pseudo_att = pseudo_att[chosen_index[0],...].clone()
+                    pseudo_confidence_map = pseudo_confidence_map[chosen_index[0],...].clone()
+                    weight = weight[chosen_index[0],...].clone() 
+            elif __C.LISTEN == True:
+                student.eval()
+                with torch.no_grad():
+                    pseudo_box_student, pseudo_mask_student, att_student = student(image_iter_unlabel_q, ref_iter_unlabel_q)
+                    pseudo_box_student = pseudo_box_student.squeeze(1).cpu().numpy()
+                filter = pseudo_box[:,4] > pseudo_box_student[:,4]
+                if False in filter:
+                    chosen_index = np.where(filter==True)
+                    image_iter_unlabel_q = image_iter_unlabel_q[chosen_index[0],...].clone()
+                    ref_iter_unlabel_q = ref_iter_unlabel_q[chosen_index[0],...].clone()
+                    sized_pseudo_box = sized_pseudo_box[chosen_index[0],...].clone()
+                    pseudo_mask = pseudo_mask[chosen_index[0],...].clone()
+                    pseudo_att = pseudo_att[chosen_index[0],...].clone()
+                    pseudo_confidence_map = pseudo_confidence_map[chosen_index[0],...].clone()
+                    weight = weight[chosen_index[0],...].clone() 
+                                       
+                student.train()
+            check_x = sized_pseudo_box[...,0]>=1
+            check_y = sized_pseudo_box[...,1]>=1
+            check = (check_x + check_y)==False
+            if False in check:
+                chosen_index = np.where(check==True)
+                image_iter_unlabel_q = image_iter_unlabel_q[chosen_index[0],...].clone()
+                ref_iter_unlabel_q = ref_iter_unlabel_q[chosen_index[0],...].clone()
+                sized_pseudo_box = sized_pseudo_box[chosen_index[0],...].clone()
+                pseudo_mask = pseudo_mask[chosen_index[0],...].clone()
+                pseudo_att = pseudo_att[chosen_index[0],...].clone()
+                pseudo_confidence_map = pseudo_confidence_map[chosen_index[0],...].clone()
+                weight = weight[chosen_index[0],...].clone()
+            image_iter = torch.cat([image_iter,image_iter_unlabel_q.clone()],0).cuda(non_blocking=True)
+            ref_iter = torch.cat([ref_iter, ref_iter_unlabel_q.clone()], 0).cuda(non_blocking=True)
             box_iter=torch.cat([box_iter,sized_pseudo_box],0).cuda(non_blocking=True)
             mask_iter=torch.cat([mask_iter,pseudo_mask],0).cuda(non_blocking=True)
                 
 
             if scalar is not None:
                 with th.cuda.amp.autocast():
-                    loss_sup,loss_det_sup,loss_seg_sup,loss_semi,loss_det_semi,loss_seg_semi = student(image_iter,ref_iter,det_label=box_iter,seg_label=mask_iter,semi=True)
+                    loss_sup,loss_det_sup,loss_seg_sup,loss_semi,loss_det_semi,loss_seg_semi = student(image_iter,ref_iter,det_label=box_iter,seg_label=mask_iter,semi=True,att_target=pseudo_att,confidence_map=pseudo_confidence_map,weight=weight)
             else:
-                loss_sup,loss_det_sup,loss_seg_sup,loss_semi,loss_det_semi,loss_seg_semi = student(image_iter,ref_iter,det_label=box_iter,seg_label=mask_iter,semi=True)
+                loss_sup,loss_det_sup,loss_seg_sup,loss_semi,loss_det_semi,loss_seg_semi = student(image_iter,ref_iter,det_label=box_iter,seg_label=mask_iter,semi=True,att_target=pseudo_att,confidence_map=pseudo_confidence_map,weight=weight)
 
             loss=loss_sup+loss_semi*__C.SEMI_LOSS_WEIGHT
 
@@ -312,7 +353,7 @@ def train_one_epoch(__C,
         
         step = epoch * batches + ith_batch
         if step % __C.VALIDATE_FREQ == 0 and step != 0:
-            box_ap_student,mask_ap=validate_iter(__C,student,val_loader,writer,epoch,step,rank,ix_to_token,ema=ema,student=True)
+            box_ap_student,mask_ap=validate_iter(__C,student,val_loader,writer,epoch,step,rank,ix_to_token,ema=None,student=True)
         if step % __C.VALIDATE_FREQ == 0 and step != 0 and step >= __C.BURN_UP:
             box_ap_teacher,mask_ap=validate_iter(__C,teacher,val_loader,writer,epoch,step,rank,ix_to_token,ema=None,student=False)
 
@@ -327,8 +368,7 @@ def train_one_epoch(__C,
                     print('Save teacher checkpoint...')
                 print('Teacher best acc: ', best_det_acc_teacher)
                 print('Teacher best step: ', best_teacher_step)
-            if ema is not None:
-                ema.apply_shadow()
+
             if step >= __C.VALIDATE_FREQ:
                 if box_ap_student>best_det_acc_student:
                     best_det_acc_student=box_ap_student
@@ -340,8 +380,6 @@ def train_one_epoch(__C,
                 print('Student best acc: ', best_det_acc_student)
                 print('Student best step: ', best_student_step)
 
-            if ema is not None:
-                    ema.restore()
         end = time.time()
     return best_det_acc_teacher,best_det_acc_student,best_teacher_step,best_student_step
         
@@ -355,6 +393,7 @@ def main_worker(gpu,__C):
             __C.RANK = int(os.environ["RANK"])
         if __C.MULTIPROCESSING_DISTRIBUTED:
             __C.RANK = __C.RANK* len(__C.GPU) + gpu
+
         dist.init_process_group(backend=dist.Backend('NCCL'), init_method=__C.DIST_URL, world_size=__C.WORLD_SIZE, rank=__C.RANK)
 
     train_set_label=RefCOCODataSet_semi(__C,split='train',sup=False,label=True)
@@ -362,6 +401,7 @@ def main_worker(gpu,__C):
 
     train_set_unlabel=RefCOCODataSet_semi(__C,split='train',sup=False,label=False)
     train_loader_unlabel=loader(__C,train_set_unlabel,gpu,shuffle=(not __C.MULTIPROCESSING_DISTRIBUTED),drop_last=True)
+
 
     val_set=RefCOCODataSet_semi(__C,split='val',sup=False,label=True)
     val_loader=loader(__C,val_set,gpu,shuffle=False)
@@ -415,7 +455,7 @@ def main_worker(gpu,__C):
     start_epoch = 0
 
     if os.path.isfile(__C.RESUME_PATH):
-        checkpoint = torch.load(__C.RESUME_PATH,map_location=torch.device('cpu')) # lambda storage, loc: storage.cuda()
+        checkpoint = torch.load(__C.RESUME_PATH,map_location=lambda storage, loc: storage.cuda() )
         new_dict = {}
         for k in checkpoint['state_dict']:
             if 'module.' in k:
@@ -423,8 +463,11 @@ def main_worker(gpu,__C):
                 new_dict[new_k] = checkpoint['state_dict'][k]
         if len(new_dict.keys())==0:
             new_dict=checkpoint['state_dict']
-        teacher.load_state_dict(new_dict,strict=False)
-
+        student.load_state_dict(new_dict,strict=False)
+        student.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['scheduler'])
+        start_epoch = checkpoint['epoch']
         if main_process(__C,gpu):
             print("==> loaded checkpoint from {}\n".format(__C.RESUME_PATH) +
                   "==> epoch: {} lr: {} ".format(checkpoint['epoch'],checkpoint['lr']))
@@ -443,8 +486,6 @@ def main_worker(gpu,__C):
         if main_process(__C,gpu):
             print("==> loaded checkpoint from {}\n".format(__C.VL_PRETRAIN_WEIGHT) +
                   "==> epoch: {} lr: {} ".format(checkpoint['epoch'],checkpoint['lr']))
-
-
 
     if __C.AMP:
         assert th.__version__ >= '1.6.0', \
@@ -471,8 +512,7 @@ def main_worker(gpu,__C):
 
 def main():
     parser = argparse.ArgumentParser(description="RealGIN or SimREC")
-    parser.add_argument('--config', type=str, required=True, default='./config/sup/realgin_sup_baseline.yaml')
-    parser.add_argument('--resume-weights', type=str, required=True, default='')
+    parser.add_argument('--config', type=str, required=True, default='./config/refteacher/realgin_refteacher.yaml')
     args=parser.parse_args()
     assert args.config is not None
     __C = config.load_cfg_from_cfg_file(args.config)
@@ -480,7 +520,7 @@ def main():
     setup_unique_version(__C)
     seed_everything(__C.SEED)
     N_GPU=len(__C.GPU)
-    __C.RESUME_PATH=args.resume_weights
+
     if not os.path.exists(os.path.join(__C.LOG_PATH,str(__C.VERSION))):
         os.makedirs(os.path.join(__C.LOG_PATH,str(__C.VERSION),'ckpt'),exist_ok=True)
 

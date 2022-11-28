@@ -292,47 +292,6 @@ def make_transforms(__C, image_set,label=True):
             crop_prob = 0.5
         else:
             crop_prob = 0.
-
-        # # q:randomresize+horizontalflip+colorjitter+aug_translate w:randomresize+horizontalflip+aug_translate
-        # if label==False:
-        #     return T.Compose([
-        #         T.RandomSelect(
-        #             T.RandomResize(scales),
-        #             T.Compose([
-        #                 T.RandomResize([400, 500, 600], with_long_side=False),
-        #                 T.RandomSizeCrop(384, 600),
-        #                 T.RandomResize(scales),
-        #             ]),
-        #             p=crop_prob
-        #         ), 
-        #         T.RandomHorizontalFlip()
-        #         ]), T.Compose([
-        #         T.ToTensor(),
-        #         T.NormalizeAndPad(mean=__C.MEAN,std=__C.STD,size=imsize, aug_translate=__C.AUG_TRANSLATE)
-        #     ]), T.Compose([
-        #         T.ColorJitter(0.4, 0.4, 0.4),
-        #         T.GaussianBlur(aug_blur=__C.AUG_BLUR),
-        #         T.ToTensor(),
-        #         T.NormalizeAndPad(mean=__C.MEAN,std=__C.STD,size=imsize, aug_translate=__C.AUG_TRANSLATE)
-        #     ])
-
-        # else:
-        #     return T.Compose([
-        #         T.RandomSelect(
-        #             T.RandomResize(scales),
-        #             T.Compose([
-        #                 T.RandomResize([400, 500, 600], with_long_side=False),
-        #                 T.RandomSizeCrop(384, 600),
-        #                 T.RandomResize(scales),
-        #             ]),
-        #             p=crop_prob
-        #         ),
-        #         T.ColorJitter(0.4, 0.4, 0.4),
-        #         T.GaussianBlur(aug_blur=__C.AUG_BLUR),
-        #         T.RandomHorizontalFlip(),
-        #         T.ToTensor(),
-        #         T.NormalizeAndPad(mean=__C.MEAN,std=__C.STD,size=imsize, aug_translate=__C.AUG_TRANSLATE)
-        #     ])
         
         # q:randomresize+horizontalflip+colorjitter+aug_translate w:horizontalflip
         if label==False:
@@ -375,37 +334,6 @@ def make_transforms(__C, image_set,label=True):
                 T.ToTensor(),
                 T.NormalizeAndPad(mean=__C.MEAN,std=__C.STD,size=imsize, aug_translate=__C.AUG_TRANSLATE)
             ])
-
-        # # q:randomresize w:noun
-        # if label==False:
-        #     return T.Compose([
-        #         ]), T.Compose([
-        #         T.RandomResize([imsize]),
-        #         T.ToTensor(),
-        #         T.NormalizeAndPad(mean=__C.MEAN,std=__C.STD,size=imsize, aug_translate=__C.AUG_TRANSLATE)
-        #     ]), T.Compose([
-        #         T.RandomResize(scales),
-        #         T.ToTensor(),
-        #         T.NormalizeAndPad(mean=__C.MEAN,std=__C.STD,size=imsize, aug_translate=__C.AUG_TRANSLATE)
-        #     ])
-
-        # else:
-        #     return T.Compose([
-        #         T.RandomSelect(
-        #             T.RandomResize(scales),
-        #             T.Compose([
-        #                 T.RandomResize([400, 500, 600], with_long_side=False),
-        #                 T.RandomSizeCrop(384, 600),
-        #                 T.RandomResize(scales),
-        #             ]),
-        #             p=crop_prob
-        #         ),
-        #         # T.ColorJitter(0.4, 0.4, 0.4),
-        #         # T.GaussianBlur(aug_blur=__C.AUG_BLUR),
-        #         # T.RandomHorizontalFlip(),
-        #         T.ToTensor(),
-        #         T.NormalizeAndPad(mean=__C.MEAN,std=__C.STD,size=imsize, aug_translate=__C.AUG_TRANSLATE)
-        #     ])
 
     if image_set in ['val', 'test', 'testA', 'testB']:
         return T.Compose([
