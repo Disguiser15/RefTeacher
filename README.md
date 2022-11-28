@@ -8,7 +8,7 @@ RefTeacher is a strong baseline method for Semi-Supervised Referring Expression 
 
 
 <p align="center">
-	<img src="./misc/RefTeacher.jpg" width="600">
+	<img src="./misc/RefTeacher.jpg" width="800">
 </p>
 
 
