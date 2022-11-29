@@ -224,7 +224,7 @@ def train_one_epoch(__C,
         elif ni >= __C.BURN_UP and (
                 ni - __C.BURN_UP
         ) % __C.SEMI_UPDATE_ITER == 0:
-            if ni == __C.BURN_UP:
+            if ni == __C.BURN_UP and (not __C.STAC):
                 _update_teacher_model(student, teacher, word_size=len(__C.GPU), keep_rate=0.)
                 print("Going to semi-supervised stage...")
 
@@ -285,7 +285,7 @@ def train_one_epoch(__C,
         if ema is not None:
             ema.update_params()
         
-        if ni>=__C.BURN_UP:
+        if ni>=__C.BURN_UP and (not __C.STAC):
             _update_teacher_model(student, teacher, word_size=len(__C.GPU), keep_rate=__C.SEMI_EMA)
 
         losses_sup.update(loss_sup.item(), image_iter.size(0))
