@@ -599,7 +599,7 @@ class RefCOCODataSet_semi(Data.Dataset):
             ref_iter_w=self.proc_ref(input_dict_w['text'],self.token_to_ix,self.max_token)
             ref_iter_q=self.proc_ref(input_dict_q_process['text'],self.token_to_ix,self.max_token)
             info_iter_w=[h,w,*input_dict_w['info_img'],iid]
-            info_iter_q=[h,w,*input_dict_q['info_img'],iid]
+            info_iter_q=[h,w,*input_dict_q_process['info_img'],iid]
             return \
                 torch.from_numpy(ref_iter_w).long(), \
                 input_dict_w['img'], \
