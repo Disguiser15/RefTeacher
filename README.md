@@ -13,7 +13,7 @@ RefTeacher is a strong baseline method for Semi-Supervised Referring Expression 
 
 
 ## Updates
-- (2022/11/28) Release our RefTeacher project.
+- (2023/5/23) Release our RefTeacher project.
 
 ## Installation
 - Clone this repo
