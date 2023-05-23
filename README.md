@@ -90,6 +90,16 @@ This project is released under the [Apache 2.0 license](LICENSE).
 
 If this repository is helpful for your research, or you want to refer the provided results in your paper, consider cite:
 ```BibTeX
+@InProceedings{Sun_2023_CVPR,
+    author    = {Sun, Jiamu and Luo, Gen and Zhou, Yiyi and Sun, Xiaoshuai and Jiang, Guannan and Wang, Zhiyu and Ji, Rongrong},
+    title     = {RefTeacher: A Strong Baseline for Semi-Supervised Referring Expression Comprehension},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+    month     = {June},
+    year      = {2023},
+    pages     = {19144-19154}
+}
+```
+```BibTeX
 @article{luo2022what,
   title={What Goes beyond Multi-modal Fusion in One-stage Referring Expression Comprehension: An Empirical Study},
   author={Luo, Gen and Zhou, Yiyi and Sun, Jiamu and Huang, Shubin and Sun, Xiaoshuai and Ye, Qixiang and Wu, Yongjian and Ji, Rongrong},
