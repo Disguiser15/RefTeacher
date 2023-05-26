@@ -107,49 +107,6 @@ If this repository is helpful for your research, or you want to refer the provid
   year={2022}
 }
 ```
-```BibTeX
-@article{zhu2022seqtr,
-  title={SeqTR: A Simple yet Universal Network for Visual Grounding},
-  author={Zhu, Chaoyang and Zhou, Yiyi and Shen, Yunhang and Luo, Gen and Pan, Xingjia and Lin, Mingbao and Chen, Chao and Cao, Liujuan and Sun, Xiaoshuai and Ji, Rongrong},
-  journal={arXiv preprint arXiv:2203.16265},
-  year={2022}
-}
-```
-```BibTeX
-@InProceedings{Luo_2020_CVPR,
-author = {Luo, Gen and Zhou, Yiyi and Sun, Xiaoshuai and Cao, Liujuan and Wu, Chenglin and Deng, Cheng and Ji, Rongrong},
-title = {Multi-Task Collaborative Network for Joint Referring Expression Comprehension and Segmentation},
-booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-month = {June},
-year = {2020}
-}
-```
-```BibTeX
-@inproceedings{luo2020cascade,
-  title={Cascade grouped attention network for referring expression segmentation},
-  author={Luo, Gen and Zhou, Yiyi and Ji, Rongrong and Sun, Xiaoshuai and Su, Jinsong and Lin, Chia-Wen and Tian, Qi},
-  booktitle={Proceedings of the 28th ACM International Conference on Multimedia},
-  pages={1274--1282},
-  year={2020}
-}
-```
-```BibTeX
-@article{zhou2021real,
-  title={A real-time global inference network for one-stage referring expression comprehension},
-  author={Zhou, Yiyi and Ji, Rongrong and Luo, Gen and Sun, Xiaoshuai and Su, Jinsong and Ding, Xinghao and Lin, Chia-Wen and Tian, Qi},
-  journal={IEEE Transactions on Neural Networks and Learning Systems},
-  year={2021},
-  publisher={IEEE}
-}
-```
-```BibTeX
-@misc{luo2022simrec,
-  author =       {Gen Luo and Tianhe Ren},
-  title =        {SimREC},
-  howpublished = {\url{https://github.com/luogen1996/SimREC}},
-  year =         {2022}
-}
-```
 ## Acknowledgement
 
 Thanks a lot for the nicely organized code from the following repos
